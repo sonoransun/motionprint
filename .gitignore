@@ -1,0 +1,77 @@
+# Virtual environments and dependencies
+.venv/
+venv/
+env/
+ENV/
+.conda/
+node_modules/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Distribution and packaging
+dist/
+build/
+*.egg-info/
+*.egg
+*.whl
+MANIFEST
+pip-wheel-metadata/
+
+# Editable install artifacts
+*.egg-link
+src/*.egg-info/
+
+# Test and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# motionprint outputs
+*.mp4
+*.webm
+*_qr.png
+
+# Submodules and vendored dependencies
+vendor/
+third_party/
+submodules/
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS
+.DS_Store
+.Spotlight-V100
+.Trashes
+ehthumbs.db

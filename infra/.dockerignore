@@ -1,0 +1,9 @@
+target/
+.venv/
+__pycache__/
+.git/
+.pytest_cache/
+*.mp4
+*.webm
+infra/terraform/
+.claude/

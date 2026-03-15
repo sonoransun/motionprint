@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "motionprint"
+version = "0.1.0"
+description = "Animated 3D video visualization of SHA-256 hash digests"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "moderngl>=5.8",
+    "numpy>=1.24",
+    "pyrr>=0.10",
+    "qrcode>=7.0",
+]
+
+[project.scripts]
+motionprint = "motionprint.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/motionprint"]
