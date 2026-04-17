@@ -6,12 +6,12 @@ The round-state array (num_blocks, 64, 8) drives animation keyframes.
 
 from __future__ import annotations
 
-import colorsys
 import dataclasses
 
 import numpy as np
 
 from motionprint.sha256_state import HashResult
+from motionprint.palette import PRESETS, PaletteSpec, apply_palette
 
 SHAPE_NAMES = ("icosphere", "torus", "superellipsoid", "octahedron", "twisted_torus")
 
@@ -60,15 +60,25 @@ class VisualParams:
     # Animated keyframes: (total_rounds, 8) float32, normalized 0-1
     keyframes: np.ndarray
 
-
-def _hsl_to_rgb(h: float, s: float, l: float) -> tuple[float, float, float]:
-    """Convert HSL (h in 0-360, s/l in 0-1) to RGB (0-1)."""
-    r, g, b = colorsys.hls_to_rgb(h / 360.0, l, s)
-    return (r, g, b)
+    # Render-time configuration (not hash-derived)
+    speed_multiplier: float = 1.0
+    palette_name: str = "default"
 
 
-def compute_visual_params(result: HashResult) -> VisualParams:
-    """Map a HashResult to visual parameters for rendering."""
+def compute_visual_params(
+    result: HashResult,
+    palette: PaletteSpec | None = None,
+    speed_multiplier: float = 1.0,
+) -> VisualParams:
+    """Map a HashResult to visual parameters for rendering.
+
+    ``palette`` selects colors (default palette reproduces prior hash-driven
+    output byte-for-byte). ``speed_multiplier`` scales cyclic animation rates
+    at render time and is carried through on :class:`VisualParams`.
+    """
+    if palette is None:
+        palette = PRESETS["default"]
+
     b = result.digest  # 32 bytes
 
     # Shape selection
@@ -76,26 +86,8 @@ def compute_visual_params(result: HashResult) -> VisualParams:
     base_shape = SHAPE_NAMES[shape_idx]
     subdivision = 2 + (b[2] % 3)
 
-    # Primary color (HSL for vivid results)
-    primary_color = _hsl_to_rgb(
-        h=b[4] / 255 * 360,
-        s=0.5 + b[5] / 510,
-        l=0.35 + b[6] / 425,
-    )
-
-    # Secondary color
-    secondary_color = _hsl_to_rgb(
-        h=b[7] / 255 * 360,
-        s=0.5 + b[8] / 510,
-        l=0.35 + b[9] / 425,
-    )
-
-    # Background (dark, muted)
-    background_color = _hsl_to_rgb(
-        h=b[10] / 255 * 360,
-        s=0.05 + b[11] / 2550,
-        l=0.08 + b[11] / 1275,
-    )
+    # Colors (palette-aware; default palette falls back to legacy formulas)
+    primary_color, secondary_color, background_color = apply_palette(palette, b)
 
     # Lighting
     light_elevation = b[12] / 255 * 60 + 15
@@ -151,6 +143,8 @@ def compute_visual_params(result: HashResult) -> VisualParams:
         pulse_frequency=pulse_frequency,
         morph_seed=morph_seed,
         keyframes=keyframes,
+        speed_multiplier=speed_multiplier,
+        palette_name=palette.name,
     )
 
 

@@ -21,6 +21,7 @@ impl VideoCache {
         Self { dir, max_size_bytes }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn cache_key(
         &self,
         digest: &[u8; 32],
@@ -29,6 +30,11 @@ impl VideoCache {
         height: u32,
         fps: u32,
         duration: f32,
+        palette_name: &str,
+        primary_hex: Option<&str>,
+        secondary_hex: Option<&str>,
+        background_hex: Option<&str>,
+        speed: f32,
     ) -> String {
         let mut hasher = Sha256::new();
         hasher.update(digest);
@@ -37,6 +43,15 @@ impl VideoCache {
         hasher.update(height.to_le_bytes());
         hasher.update(fps.to_le_bytes());
         hasher.update(((duration * 1000.0) as u32).to_le_bytes());
+        // 0-byte separators prevent adjacent string fields from colliding
+        // ("vibra" + "ntX" vs "vibrant" + "X").
+        hasher.update(palette_name.as_bytes());
+        hasher.update([0u8]);
+        for h in [primary_hex, secondary_hex, background_hex] {
+            hasher.update(h.unwrap_or("").as_bytes());
+            hasher.update([0u8]);
+        }
+        hasher.update(((speed * 1000.0) as u32).to_le_bytes());
         hex::encode(hasher.finalize())
     }
 
@@ -44,6 +59,7 @@ impl VideoCache {
         self.dir.join(format!("{key}.{}", format.extension()))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn get(
         &self,
         digest: &[u8; 32],
@@ -52,12 +68,30 @@ impl VideoCache {
         height: u32,
         fps: u32,
         duration: f32,
+        palette_name: &str,
+        primary_hex: Option<&str>,
+        secondary_hex: Option<&str>,
+        background_hex: Option<&str>,
+        speed: f32,
     ) -> Option<Vec<u8>> {
-        let key = self.cache_key(digest, format, width, height, fps, duration);
+        let key = self.cache_key(
+            digest,
+            format,
+            width,
+            height,
+            fps,
+            duration,
+            palette_name,
+            primary_hex,
+            secondary_hex,
+            background_hex,
+            speed,
+        );
         let path = self.path_for(&key, format);
         fs::read(&path).ok()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn put(
         &self,
         digest: &[u8; 32],
@@ -66,9 +100,26 @@ impl VideoCache {
         height: u32,
         fps: u32,
         duration: f32,
+        palette_name: &str,
+        primary_hex: Option<&str>,
+        secondary_hex: Option<&str>,
+        background_hex: Option<&str>,
+        speed: f32,
         data: &[u8],
     ) {
-        let key = self.cache_key(digest, format, width, height, fps, duration);
+        let key = self.cache_key(
+            digest,
+            format,
+            width,
+            height,
+            fps,
+            duration,
+            palette_name,
+            primary_hex,
+            secondary_hex,
+            background_hex,
+            speed,
+        );
         let path = self.path_for(&key, format);
         fs::write(&path, data).ok();
         self.maybe_evict();

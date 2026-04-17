@@ -3,7 +3,7 @@
 /// Port of Python `hash_mapping.py:compute_visual_params()`.
 /// Identical byte allocations and formulas.
 
-use crate::math_util::hls_to_rgb;
+use crate::palette::{apply_palette, PaletteSpec};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Shape {
@@ -43,32 +43,22 @@ pub struct VisualParams {
     pub pulse_amplitude: f32,
     pub pulse_frequency: f32,
     pub morph_seed: [u8; 4],
+    pub speed_multiplier: f32,
+    pub palette_name: &'static str,
 }
 
-pub fn compute_visual_params(digest: &[u8; 32]) -> VisualParams {
+pub fn compute_visual_params(
+    digest: &[u8; 32],
+    palette: &PaletteSpec,
+    speed_multiplier: f32,
+) -> VisualParams {
     let b = digest;
 
     let shape_idx = (((b[0] as u16) << 8) | b[1] as u16) % 5;
     let base_shape = SHAPES[shape_idx as usize];
     let subdivision = 2 + (b[2] % 3) as u32;
 
-    let primary_color = hls_to_rgb(
-        b[4] as f32 / 255.0,
-        0.35 + b[6] as f32 / 425.0,
-        0.5 + b[5] as f32 / 510.0,
-    );
-
-    let secondary_color = hls_to_rgb(
-        b[7] as f32 / 255.0,
-        0.35 + b[9] as f32 / 425.0,
-        0.5 + b[8] as f32 / 510.0,
-    );
-
-    let background_color = hls_to_rgb(
-        b[10] as f32 / 255.0,
-        0.08 + b[11] as f32 / 1275.0,
-        0.05 + b[11] as f32 / 2550.0,
-    );
+    let (primary_color, secondary_color, background_color) = apply_palette(palette, digest);
 
     let light_elevation = b[12] as f32 / 255.0 * 60.0 + 15.0;
     let light_azimuth_start = b[13] as f32 / 255.0 * 360.0;
@@ -116,12 +106,19 @@ pub fn compute_visual_params(digest: &[u8; 32]) -> VisualParams {
         pulse_amplitude,
         pulse_frequency,
         morph_seed,
+        speed_multiplier,
+        palette_name: palette.name,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::palette::preset;
+
+    fn default_spec() -> PaletteSpec {
+        preset("default").unwrap()
+    }
 
     #[test]
     fn test_shape_selection() {
@@ -129,7 +126,7 @@ mod tests {
         for i in 0..5u16 {
             digest[0] = (i >> 8) as u8;
             digest[1] = (i & 0xff) as u8;
-            let params = compute_visual_params(&digest);
+            let params = compute_visual_params(&digest, &default_spec(), 1.0);
             assert_eq!(params.base_shape, SHAPES[i as usize]);
         }
     }
@@ -139,7 +136,7 @@ mod tests {
         for val in 0..=255u8 {
             let mut digest = [0u8; 32];
             digest[2] = val;
-            let params = compute_visual_params(&digest);
+            let params = compute_visual_params(&digest, &default_spec(), 1.0);
             assert!(params.subdivision >= 2 && params.subdivision <= 4);
         }
     }
@@ -147,7 +144,7 @@ mod tests {
     #[test]
     fn test_color_in_range() {
         let digest = [0x55u8; 32];
-        let params = compute_visual_params(&digest);
+        let params = compute_visual_params(&digest, &default_spec(), 1.0);
         for ch in params.primary_color {
             assert!((0.0..=1.0).contains(&ch));
         }
@@ -159,10 +156,27 @@ mod tests {
     #[test]
     fn test_deterministic() {
         let digest = [0xAB; 32];
-        let p1 = compute_visual_params(&digest);
-        let p2 = compute_visual_params(&digest);
+        let p1 = compute_visual_params(&digest, &default_spec(), 1.0);
+        let p2 = compute_visual_params(&digest, &default_spec(), 1.0);
         assert_eq!(p1.base_shape, p2.base_shape);
         assert_eq!(p1.primary_color, p2.primary_color);
         assert_eq!(p1.shininess, p2.shininess);
+    }
+
+    #[test]
+    fn test_speed_multiplier_carried() {
+        let digest = [0xCDu8; 32];
+        let params = compute_visual_params(&digest, &default_spec(), 2.5);
+        assert_eq!(params.speed_multiplier, 2.5);
+        assert_eq!(params.palette_name, "default");
+    }
+
+    #[test]
+    fn test_palette_changes_colors() {
+        let digest = [0x33u8; 32];
+        let base = compute_visual_params(&digest, &default_spec(), 1.0);
+        let vibrant = compute_visual_params(&digest, &preset("vibrant").unwrap(), 1.0);
+        assert_eq!(vibrant.palette_name, "vibrant");
+        assert_ne!(base.primary_color, vibrant.primary_color);
     }
 }

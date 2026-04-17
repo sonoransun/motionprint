@@ -15,6 +15,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::cache::VideoCache;
 use crate::encoder::VideoFormat;
+use crate::palette::{resolve_palette, KNOWN_PALETTES};
 use crate::scene::render_video;
 
 pub struct AppState {
@@ -27,6 +28,11 @@ fn default_width() -> u32 { 1280 }
 fn default_height() -> u32 { 720 }
 fn default_fps() -> u32 { 30 }
 fn default_duration() -> f32 { 6.0 }
+fn default_speed() -> f32 { 1.0 }
+
+const TEMPO_CALM: f32 = 0.5;
+const TEMPO_NORMAL: f32 = 1.0;
+const TEMPO_ENERGETIC: f32 = 2.0;
 
 #[derive(Debug, Deserialize)]
 pub struct RenderQuery {
@@ -40,6 +46,18 @@ pub struct RenderQuery {
     pub fps: u32,
     #[serde(default = "default_duration")]
     pub duration: f32,
+    #[serde(default)]
+    pub palette: Option<String>,
+    #[serde(default)]
+    pub primary_color: Option<String>,
+    #[serde(default)]
+    pub secondary_color: Option<String>,
+    #[serde(default)]
+    pub background_color: Option<String>,
+    #[serde(default)]
+    pub tempo: Option<String>,
+    #[serde(default = "default_speed")]
+    pub speed: f32,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -83,10 +101,52 @@ async fn render_handler(
     if !(0.5..=30.0).contains(&query.duration) {
         return Err(ApiError::InvalidParams("duration must be 0.5–30.0".into()));
     }
+    if !(0.1..=10.0).contains(&query.speed) {
+        return Err(ApiError::InvalidParams("speed must be 0.1–10.0".into()));
+    }
+
+    // Resolve palette + overrides
+    let palette_name = query.palette.as_deref().unwrap_or("default");
+    if !KNOWN_PALETTES.contains(&palette_name) {
+        return Err(ApiError::InvalidParams(format!(
+            "unknown palette: {palette_name:?} (known: {})",
+            KNOWN_PALETTES.join(", ")
+        )));
+    }
+    let palette = resolve_palette(
+        palette_name,
+        query.primary_color.as_deref(),
+        query.secondary_color.as_deref(),
+        query.background_color.as_deref(),
+    )
+    .map_err(|e| ApiError::InvalidParams(e.to_string()))?;
+
+    // Resolve tempo * speed into a final multiplier.
+    let tempo_factor = match query.tempo.as_deref() {
+        None | Some("normal") => TEMPO_NORMAL,
+        Some("calm") => TEMPO_CALM,
+        Some("energetic") => TEMPO_ENERGETIC,
+        Some(other) => {
+            return Err(ApiError::InvalidParams(format!(
+                "unknown tempo: {other:?} (known: calm, normal, energetic)"
+            )))
+        }
+    };
+    let final_speed = tempo_factor * query.speed;
 
     // Check cache
     if let Some(data) = state.cache.get(
-        &digest, query.format, query.width, query.height, query.fps, query.duration,
+        &digest,
+        query.format,
+        query.width,
+        query.height,
+        query.fps,
+        query.duration,
+        palette_name,
+        query.primary_color.as_deref(),
+        query.secondary_color.as_deref(),
+        query.background_color.as_deref(),
+        final_speed,
     ) {
         return Ok(video_response(data, &sha256_hex, query.format));
     }
@@ -103,9 +163,10 @@ async fn render_handler(
     let height = query.height;
     let fps = query.fps;
     let duration = query.duration;
+    let render_palette = palette;
 
     let data = tokio::task::spawn_blocking(move || {
-        render_video(&digest, format, width, height, fps, duration)
+        render_video(&digest, format, width, height, fps, duration, &render_palette, final_speed)
     })
     .await
     .map_err(|e| ApiError::Internal(format!("render task failed: {e}")))?
@@ -119,6 +180,11 @@ async fn render_handler(
         query.height,
         query.fps,
         query.duration,
+        palette_name,
+        query.primary_color.as_deref(),
+        query.secondary_color.as_deref(),
+        query.background_color.as_deref(),
+        final_speed,
         &data,
     );
 

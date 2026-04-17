@@ -100,7 +100,10 @@ Output filename defaults to `motionprint_<first 8 hex chars>.mp4` when `-o` is n
 ## CLI Reference
 
 ```
-motionprint [-h] [-s STRING] [-o OUTPUT] [-r WxH] [--fps N] [--duration S] [--qr] [-v] [FILE]
+motionprint [-h] [-s STRING] [-o OUTPUT] [-r WxH] [--fps N] [--duration S]
+            [--palette NAME] [--primary-color HEX] [--secondary-color HEX]
+            [--background-color HEX] [--tempo NAME] [--speed FLOAT]
+            [--qr] [-v] [FILE]
 ```
 
 | Argument | Default | Description |
@@ -111,6 +114,12 @@ motionprint [-h] [-s STRING] [-o OUTPUT] [-r WxH] [--fps N] [--duration S] [--qr
 | `-r, --resolution` | `1280x720` | Video resolution (WxH) |
 | `--fps` | `30` | Frames per second |
 | `--duration` | `6.0` | Video duration in seconds |
+| `--palette` | `default` | Named palette: `default`, `vibrant`, `pastel`, `mono`, `sunset`, `cyberpunk`, `ocean` |
+| `--primary-color` | — | Override primary color as `#RRGGBB` |
+| `--secondary-color` | — | Override secondary color as `#RRGGBB` |
+| `--background-color` | — | Override background color as `#RRGGBB` |
+| `--tempo` | `normal` | Animation tempo preset: `calm` (0.5×), `normal` (1.0×), `energetic` (2.0×) |
+| `--speed` | `1.0` | Animation speed multiplier (0.1–10.0); composes with `--tempo` |
 | `--qr` | off | Embed QR code in video and save standalone QR PNG |
 | `-v, --verbose` | off | Print SHA-256 digest, shape info, and render progress |
 
@@ -325,6 +334,66 @@ Blinn-Phong shading with a single orbiting point light:
 
 ---
 
+## Customizing Appearance
+
+By default every visual property is derived from the SHA-256 digest. For presentation, branding, or side-by-side comparison you can select a named **palette** and scale **animation speed** without losing determinism: the same `(input, palette, color overrides, speed)` tuple always produces byte-identical output.
+
+### Named palettes
+
+| Name | Look |
+|------|------|
+| `default` | Full-range hash-driven HSL (unchanged behavior) |
+| `vibrant` | Saturated, mid-lightness primary and secondary |
+| `pastel` | Soft, high-lightness colors |
+| `mono` | Near-grayscale primary/secondary, hash-driven background |
+| `sunset` | Warm oranges with magenta/pink accent |
+| `cyberpunk` | Magenta + cyan primaries on a deep-blue muted ground |
+| `ocean` | Blue/teal gradient in both primary and secondary |
+
+Hash bytes still drive variation inside each preset's H/S/L bands, so two different inputs rendered under the same palette remain visually distinct.
+
+```bash
+# Use a named preset
+motionprint -s "hello" --palette vibrant -o hello-vibrant.mp4
+
+# Combine palette and animation tempo
+motionprint -s "hello" --palette cyberpunk --tempo energetic -o hello-cp.mp4
+
+# Custom primary + secondary colors (hex overrides beat the preset)
+motionprint -s "hello" --primary-color '#ff3388' --secondary-color '#33ccff' -o hello-brand.mp4
+
+# Muted look, slightly slower
+motionprint -s "hello" --palette mono --speed 0.75 -o hello-mono.mp4
+```
+
+### Speed control
+
+`--speed` is a floating-point multiplier (0.1–10.0) applied to cyclic motion — rotation, pulse, camera orbit, and light orbit. `--tempo` selects a named preset (`calm` = 0.5×, `normal` = 1.0×, `energetic` = 2.0×) and **composes** with `--speed` multiplicatively. So `--tempo energetic --speed 0.5` yields an effective multiplier of 1.0.
+
+Keyframe traversal — the animation channels driven by SHA-256's round-state evolution — always spans the full video duration exactly once regardless of speed. This preserves the "animation as hash visualization" narrative while letting you tune the perceived pace.
+
+### HTTP service parity
+
+The Rust service exposes the same knobs as query parameters. All of these default to values that reproduce the legacy output, so existing callers are unaffected.
+
+```
+GET /v1/motionprint/<sha256_hex>
+    ?palette=ocean
+    &primary_color=%23ff3388
+    &secondary_color=%2333ccff
+    &background_color=%23101018
+    &tempo=energetic
+    &speed=1.5
+```
+
+```bash
+curl 'http://localhost:8080/v1/motionprint/b94d27b9.../?palette=sunset&speed=1.25' -o sunset.webm
+```
+
+Palette name, hex overrides, and the final speed multiplier are all folded into the response cache key, so palette variations are cached independently.
+
+---
+
 ## Verification
 
 Motionprint provides two complementary verification methods: visual comparison of the 3D animation, and QR-code-based hash extraction.
@@ -475,12 +544,13 @@ Input of 1 KB
 
 ### Determinism
 
-Motionprint is fully deterministic. The same input always produces a byte-identical output video. This is ensured by:
+Motionprint is fully deterministic. The output is determined by the tuple `(input bytes, palette, primary/secondary/background hex overrides, final speed multiplier)` — any combination of these produces a byte-identical video on re-run. In particular, the default palette with `--speed 1.0` (and `--tempo normal`) reproduces the pre-palette hash-driven output exactly. Determinism is ensured by:
 
 - Pure SHA-256 implementation with no external state
 - Fixed random seed for noise (derived from digest bytes 28–31)
 - Deterministic GPU rendering (same geometry, same uniforms, same result)
 - Deterministic ffmpeg encoding (fixed parameters, no rate control adaptation)
+- Palette presets and overrides applied through pure functions with no hidden state
 
 ---
 
@@ -503,6 +573,7 @@ motionprint -s "test" --duration 2 -r 640x360 -v
 src/motionprint/
 ├── sha256_state.py     Pure SHA-256 with round-state capture
 ├── hash_mapping.py     32-byte digest → VisualParams + keyframe interpolation
+├── palette.py          Named palette presets + hex overrides → apply_palette
 ├── geometry.py         Icosphere/torus/superellipsoid generation + deformation
 ├── shaders.py          GLSL 330 vertex + fragment shaders (Blinn-Phong)
 ├── renderer.py         moderngl offscreen context, framebuffer, render loop

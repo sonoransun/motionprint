@@ -9,13 +9,16 @@ use crate::animation::{generate_keyframes, interpolate_keyframes};
 use crate::encoder::{EncoderError, FfmpegEncoder, VideoFormat};
 use crate::geometry::{deform_mesh, generate_mesh};
 use crate::math_util::{hue_shift_rgb, lerp_color, light_color_from_warmth, spherical_to_cartesian};
+use crate::palette::PaletteSpec;
 use crate::params::compute_visual_params;
 use crate::rasterizer::{rasterize_mesh, FrameBuffer};
 use crate::shading::ShadeUniforms;
 
 /// Generate a motionprint video from a 32-byte digest.
 ///
-/// Returns the encoded video bytes.
+/// Returns the encoded video bytes. `speed_multiplier` scales cyclic motion
+/// (rotation, pulse, camera orbit, light orbit); keyframe traversal still
+/// spans the duration once regardless of this value.
 pub fn render_video(
     digest: &[u8; 32],
     format: VideoFormat,
@@ -23,8 +26,11 @@ pub fn render_video(
     height: u32,
     fps: u32,
     duration: f32,
+    palette: &PaletteSpec,
+    speed_multiplier: f32,
 ) -> Result<Vec<u8>, EncoderError> {
-    let params = compute_visual_params(digest);
+    let params = compute_visual_params(digest, palette, speed_multiplier);
+    let speed = params.speed_multiplier;
     let keyframes = generate_keyframes(digest);
     let base_mesh = generate_mesh(params.base_shape, params.subdivision);
     let total_frames = (fps as f32 * duration) as u32;
@@ -65,22 +71,22 @@ pub fn render_video(
         // Model matrix: rotation around tilted axis + pulse scale
         let pulse = 1.0
             + params.pulse_amplitude
-                * (2.0 * std::f32::consts::PI * params.pulse_frequency * t).sin();
-        let angle = params.rotation_speed * t * 360.0 + rotation_offset;
+                * (2.0 * std::f32::consts::PI * params.pulse_frequency * speed * t).sin();
+        let angle = params.rotation_speed * speed * t * 360.0 + rotation_offset;
         let tilt_rad = params.axis_tilt.to_radians();
         let axis = Vec3::new(tilt_rad.sin(), tilt_rad.cos(), 0.0).normalize();
         let model = Mat4::from_scale(Vec3::splat(pulse))
             * Mat4::from_axis_angle(axis, angle.to_radians());
 
         // Camera
-        let cam_azimuth = t * 360.0 * 0.5;
+        let cam_azimuth = t * 360.0 * 0.5 * speed;
         let cam_radius = params.camera_radius + cam_dist_mod;
         let cam_pos_arr = spherical_to_cartesian(cam_azimuth, params.camera_elevation, cam_radius);
         let cam_pos = Vec3::from(cam_pos_arr);
         let view = Mat4::look_at_rh(cam_pos, Vec3::ZERO, Vec3::Z);
 
         // Light
-        let light_az = params.light_azimuth_start + t * 90.0 + light_offset;
+        let light_az = params.light_azimuth_start + t * 90.0 * speed + light_offset;
         let light_pos_arr = spherical_to_cartesian(light_az, params.light_elevation, 5.0);
         let light_color = light_color_from_warmth(params.light_warmth);
 

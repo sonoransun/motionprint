@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 import sys
 
+from motionprint.palette import PRESETS, resolve_palette
 from motionprint.scene import generate
+
+TEMPO_TABLE = {"calm": 0.5, "normal": 1.0, "energetic": 2.0}
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -53,6 +56,39 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Embed QR code of hash digest in video and save standalone QR PNG",
     )
+    parser.add_argument(
+        "--palette",
+        choices=sorted(PRESETS),
+        default="default",
+        help="Named color palette (default: default — reproduces hash-driven colors)",
+    )
+    parser.add_argument(
+        "--primary-color",
+        metavar="HEX",
+        help="Override primary color, e.g. '#ff3388'",
+    )
+    parser.add_argument(
+        "--secondary-color",
+        metavar="HEX",
+        help="Override secondary color, e.g. '#33ccff'",
+    )
+    parser.add_argument(
+        "--background-color",
+        metavar="HEX",
+        help="Override background color, e.g. '#101018'",
+    )
+    parser.add_argument(
+        "--tempo",
+        choices=sorted(TEMPO_TABLE),
+        default="normal",
+        help="Tempo preset: calm (0.5x), normal (1.0x), energetic (2.0x)",
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Animation speed multiplier, composes with --tempo (default: 1.0)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -73,6 +109,20 @@ def main(argv: list[str] | None = None) -> None:
     except ValueError:
         parser.error(f"Invalid resolution format: {args.resolution!r} (expected WxH)")
 
+    # Validate speed and resolve palette + overrides
+    if not (0.1 <= args.speed <= 10.0):
+        parser.error("--speed must be between 0.1 and 10.0")
+    try:
+        palette = resolve_palette(
+            args.palette,
+            primary_hex=args.primary_color,
+            secondary_hex=args.secondary_color,
+            background_hex=args.background_color,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    speed_multiplier = TEMPO_TABLE[args.tempo] * args.speed
+
     # Compute hash to determine default output name
     import hashlib
     hash8 = hashlib.sha256(data).hexdigest()[:8]
@@ -87,6 +137,8 @@ def main(argv: list[str] | None = None) -> None:
         duration=args.duration,
         verbose=args.verbose,
         qr=args.qr,
+        palette=palette,
+        speed_multiplier=speed_multiplier,
     )
 
     # Save standalone QR PNG alongside the video

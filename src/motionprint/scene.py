@@ -10,6 +10,7 @@ import pyrr
 
 from motionprint.sha256_state import sha256_with_states
 from motionprint.hash_mapping import compute_visual_params, interpolate_keyframes, VisualParams
+from motionprint.palette import PaletteSpec
 from motionprint.geometry import generate_mesh, deform_mesh, MeshData
 from motionprint.renderer import Renderer
 from motionprint.encoder import VideoEncoder
@@ -76,6 +77,8 @@ def generate(
     duration: float = 6.0,
     verbose: bool = False,
     qr: bool = False,
+    palette: PaletteSpec | None = None,
+    speed_multiplier: float = 1.0,
 ) -> str:
     """Generate a motionprint video from input data.
 
@@ -88,6 +91,11 @@ def generate(
         duration: Video duration in seconds.
         verbose: Print progress to stderr.
         qr: Embed QR code of hex digest in video frames.
+        palette: Color palette. ``None`` selects the default palette, which
+            reproduces the prior hash-driven colors byte-for-byte.
+        speed_multiplier: Scales cyclic animation rates (rotation, pulse,
+            camera orbit, light orbit). Keyframe traversal still spans the
+            full duration exactly once regardless of this value.
 
     Returns:
         The hex digest of the input data.
@@ -110,9 +118,15 @@ def generate(
             print("QR: embedded in video", file=sys.stderr)
 
     # Step 2: Map to visual parameters
-    params = compute_visual_params(hash_result)
+    params = compute_visual_params(
+        hash_result, palette=palette, speed_multiplier=speed_multiplier
+    )
     if verbose:
         print(f"Shape: {params.base_shape} (subdivision {params.subdivision})", file=sys.stderr)
+        print(
+            f"Palette: {params.palette_name}, speed: {params.speed_multiplier:g}",
+            file=sys.stderr,
+        )
 
     # Step 3: Generate base mesh
     base_mesh = generate_mesh(params.base_shape, params.subdivision)
@@ -157,13 +171,15 @@ def generate(
                 noise_amount,
             )
 
+            speed = params.speed_multiplier
+
             # Pulse scale
             pulse = 1.0 + params.pulse_amplitude * math.sin(
-                2 * math.pi * params.pulse_frequency * t
+                2 * math.pi * params.pulse_frequency * speed * t
             )
 
             # Model matrix: rotation + scale
-            angle = (params.rotation_speed * t * 360 + rotation_offset)
+            angle = (params.rotation_speed * speed * t * 360 + rotation_offset)
             tilt_rad = math.radians(params.axis_tilt)
             model = pyrr.matrix44.create_identity(dtype=np.float32)
             model = pyrr.matrix44.multiply(
@@ -180,7 +196,7 @@ def generate(
             model = pyrr.matrix44.multiply(scale, model)
 
             # Camera
-            cam_azimuth = t * 360 * 0.5  # slow orbit (half revolution)
+            cam_azimuth = t * 360 * 0.5 * speed  # orbit (half revolution at speed=1)
             cam_radius = params.camera_radius + cam_dist_mod
             cam_pos = _compute_camera_pos(
                 cam_azimuth, params.camera_elevation, cam_radius
@@ -193,7 +209,7 @@ def generate(
             )
 
             # Light
-            light_az = params.light_azimuth_start + t * 90 + light_offset
+            light_az = params.light_azimuth_start + t * 90 * speed + light_offset
             light_pos = _compute_light_pos(light_az, params.light_elevation)
             light_color = _light_color_from_warmth(params.light_warmth)
 
